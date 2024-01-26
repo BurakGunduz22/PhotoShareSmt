@@ -53,14 +53,16 @@ import androidx.compose.ui.unit.toOffset
 
 @SuppressLint("MissingPermission")
 @Composable
-fun LocationScreen(hasRequiredPermissions:Boolean) {
+fun LocationScreen(hasRequiredPermissions: Boolean) :String{
     val activity = LocalContext.current as ComponentActivity
-    val locationPermissionState = hasRequiredPermissions
+    val locationPermissionState by remember {
+        mutableStateOf(hasRequiredPermissions)
+    }
 
     var location by remember { mutableStateOf("Location: Unknown") }
 
     LaunchedEffect(locationPermissionState) {
-        if (locationPermissionState) {
+        if (locationPermissionState.equals(true)) {
             // Permission granted, fetch location
             location = fetchLocation(activity)
         } else {
@@ -75,6 +77,7 @@ fun LocationScreen(hasRequiredPermissions:Boolean) {
             // Clean up if necessary
         }
     }
+    return location
 }
 @Composable
 fun DraggableCard(lokasyon:String) {
@@ -90,7 +93,7 @@ fun DraggableCard(lokasyon:String) {
                     detectDragGestures { change, dragAmount ->
                         var newOffset = offset.toOffset()
                         newOffset += dragAmount
-                        offset=newOffset.round()
+                        offset = newOffset.round()
                         change.consumePositionChange()
                     }
                 },
@@ -132,36 +135,5 @@ private suspend fun fetchLocation(context: Context): String {
         }.addOnFailureListener { e ->
             continuation.resumeWithException(e)
         }
-    }
-}
-
-@ExperimentalPermissionsApi
-@SuppressLint("MissingPermission")
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        setContent {
-
-        }
-
-        // Request location permission
-        requestLocationPermission()
-    }
-
-    private fun requestLocationPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
-                LOCATION_PERMISSION_REQUEST_CODE
-            )
-        }
-    }
-
-    companion object {
-        private const val LOCATION_PERMISSION_REQUEST_CODE = 123
     }
 }

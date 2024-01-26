@@ -18,6 +18,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView.ScaleType
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,7 +34,9 @@ import androidx.camera.view.CameraController
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,9 +45,14 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Cameraswitch
@@ -52,12 +61,16 @@ import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -67,22 +80,38 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.consumePositionChange
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.round
+import androidx.compose.ui.unit.toOffset
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -111,12 +140,13 @@ import java.io.FileOutputStream
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+
 class MainActivity : ComponentActivity() {
     private lateinit var cameraExecutor: Executor
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (!hasRequiredPermissions()) {
-            ActivityCompat.requestPermissions(this, CAMERAX_PERMISSIONS,0)
+            ActivityCompat.requestPermissions(this, CAMERAX_PERMISSIONS, 0)
         }
         cameraExecutor = Executors.newSingleThreadExecutor()
         setContent {
@@ -148,9 +178,9 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private val CAMERAX_PERMISSIONS = arrayOf(
-            Manifest.permission.CAMERA
-            ,Manifest.permission.ACCESS_COARSE_LOCATION
-            ,Manifest.permission.ACCESS_FINE_LOCATION
+            Manifest.permission.CAMERA,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION
         )
     }
 }
@@ -230,6 +260,7 @@ fun captureImage(
     })
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KameraApp(
     cameraController: LifecycleCameraController,
@@ -246,79 +277,130 @@ fun KameraApp(
             imageBitmap = imageUri!!.asImageBitmap()
             var width by remember { mutableStateOf(0) }
             var height by remember { mutableStateOf(0) }
-            val density = LocalDensity.current
             var buttonEnabled by remember { mutableStateOf(true) }
-            var timerRunning by remember { mutableStateOf(false) }
-            var elapsedTime by remember { mutableStateOf(0) }
+            val coroutineScope = rememberCoroutineScope()
+            var isTextFieldVisible by remember { mutableStateOf(false) }
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val focusRequester = remember { FocusRequester() }
+            var textFieldValue by remember { mutableStateOf("") }
+            var cardValue by remember { mutableStateOf("") }
+            var ifCardCreated by remember { mutableStateOf(false) }
+            var location by remember {
+                mutableStateOf<String>("")
+            }
             fun Int.toDp(): Dp {
                 return this.dp
             }
-            Box(modifier = Modifier.fillMaxWidth().fillMaxHeight().onGloballyPositioned { coordinates ->
-                width = with(density) { coordinates.size.width.toDp().value.toInt() }
-                height = with(density) { coordinates.size.height.toDp().value.toInt() }
-            }) {
+            BackHandler(enabled = true) {
+                imageUri = null
+            }
+            Box(modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight()
+                .onGloballyPositioned { coordinates ->
+                    width = coordinates.size.width.toDp().value.toInt()
+                    height = coordinates.size.height.toDp().value.toInt()
+                }) {
+                if(!ifCardCreated){
+                    Box(modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight()
+                        .clickable { isTextFieldVisible = true }) {
+
+                    }
+                }
                 Image(
                     bitmap = imageBitmap,
                     contentDescription = "",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
                 )
-                LocationScreen(hasRequiredPermission)
+                location = LocationScreen(hasRequiredPermission)
+                if (ifCardCreated) {
+                    DraggableCard(cardValue){
+                        isTextFieldVisible=it
+                    }
+                }
             }
             Column(verticalArrangement = Arrangement.Bottom) {
                 Row(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    if(buttonEnabled){FloatingActionButton(
-                        onClick = {
-                            imageUri = null
+                    if (buttonEnabled) {
+                        FloatingActionButton(
+                            onClick = {
+                                imageUri = null
+                            }
+                        ) {
+                            Icon(Icons.Filled.Delete, "DeleteButton")
                         }
-                    ) {
-                        Icon(Icons.Filled.Delete, "DeleteButton")
-                    }
-                    FloatingActionButton(
-                        onClick = {
-                            buttonEnabled=false
-                            if (!timerRunning) {
-                                timerRunning = true
-                                CoroutineScope(Dispatchers.Default).launch {
-                                    for (i in 1..10) { // change 10 to desired duration
-                                        delay(1000)
-                                        elapsedTime = i
-                                    }
-                                    // Do something else after timer completes
-                                    timerRunning = false
+                        FloatingActionButton(
+                            onClick = {
+                                buttonEnabled = false
+                                coroutineScope.launch {
+                                    buttonEnabled =
+                                        callFunctionAndWait(context, width, height, location)
                                 }
+
                             }
-                            val newBit=CaptureComponentAsBitmap(width,height,context) {
-                            }
-                            val newImageSize=newBit!!.asImageBitmap()
-                            ShareUtils.shareImageToOthers(context, "Test", newBit)
+                        ) {
+                            Icon(Icons.Filled.Share, "ShareButton")
                         }
-                    ) {
-                        Icon(Icons.Filled.Share, "ShareButton")
-                    }}
+                    }
+                }
+            }
+            if (isTextFieldVisible) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.5f))
+                ) {
+                    TextField(
+                        value = textFieldValue,
+                        onValueChange = { textFieldValue = it },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Text,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                keyboardController?.hide()
+                                cardValue = textFieldValue
+                                ifCardCreated = true
+                                isTextFieldVisible = false
+                                textFieldValue = "" // Clear text field after submission
+                            }
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester),
+                        colors = TextFieldDefaults.colors(
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedContainerColor = Color.Transparent
+                        )
+                    )
+                    BackHandler(enabled = true) {
+                        isTextFieldVisible = false
+                        textFieldValue = ""
+                    }
                 }
             }
 
-
         } else {
             val imageCapture = remember {
-                ImageCapture.Builder().build()
+                ImageCapture.Builder().setJpegQuality(100)
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                    .build()
             }
             var kameraYon: CameraSelector
             kameraYon = CameraSelector.DEFAULT_BACK_CAMERA
             CameraPreview(imageCapture = imageCapture, cameraSelector = kameraYon)
             Column(verticalArrangement = Arrangement.Bottom) {
-                Text(text = "$imageUri")
                 Row(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    IconButton(onClick = {
-                    }
-                    ) {
-                        Icon(Icons.Filled.FlashOff, contentDescription = "Rotate Camera")
-                    }
                     CameraCapture(
                         cameraExecutor = cameraExecutor,
                         imageCapture = imageCapture,
@@ -326,37 +408,70 @@ fun KameraApp(
                     ) {
                         imageUri = it
                     }
-                    IconButton(onClick = {
-                        if (kameraYon == (CameraSelector.DEFAULT_BACK_CAMERA)) {
-                            kameraYon = CameraSelector.DEFAULT_FRONT_CAMERA
-                            Log.e("A", kameraYon.toString())
-                        } else {
-                            kameraYon = CameraSelector.DEFAULT_BACK_CAMERA
-                            Log.e("A", kameraYon.toString())
-                        }
-                    }
-                    ) {
-                        Icon(Icons.Filled.Cameraswitch, contentDescription = "Rotate Camera")
-                    }
                 }
             }
         }
     }
 }
-fun startTimer(initialTime: Int, onTick: (Int) -> Unit) {
-    GlobalScope.launch {
-        var elapsedTime = initialTime
-        while (true) {
-            delay(100) // Wait for 1 second
-            elapsedTime++
-            onTick(elapsedTime)
+
+@Composable
+fun DraggableCard(lokasyon: String,isTextFieldVisible:(Boolean)->Unit) {
+    var offset by remember { mutableStateOf(IntOffset.Zero) }
+
+    Box(
+        modifier = Modifier.padding(16.dp)
+    ) {
+        Card(
+            modifier = Modifier
+                .offset { offset }
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        var newOffset = offset.toOffset()
+                        newOffset += dragAmount
+                        offset = newOffset.round()
+                        change.consumePositionChange()
+                    }
+                }
+                .clickable { isTextFieldVisible(true) },
+
+            shape = RoundedCornerShape(8.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Transparent,
+            ),
+            elevation = CardDefaults.cardElevation(
+                defaultElevation = 6.dp
+            ),
+        ) {
+            Text(text = lokasyon)
         }
     }
 }
-fun CaptureComponentAsBitmap(width:Int,height:Int,context:Context,component: @Composable () -> Unit): Bitmap? {
-    val rootView = (context as? ComponentActivity)?.window?.decorView?.findViewById<View>(android.R.id.content)
+
+suspend fun callFunctionAndWait(
+    context: Context,
+    width: Int,
+    height: Int,
+    location: String
+): Boolean {
+    // Wait for some time
+    delay(100) // 3 seconds
+    val newBit = CaptureComponentAsBitmap(width, height, context) {
+    }
+    val newImageSize = newBit!!.asImageBitmap()
+    ShareUtils.shareImageToOthers(context, location, newBit)
+    return true
+}
+
+fun CaptureComponentAsBitmap(
+    width: Int,
+    height: Int,
+    context: Context,
+    component: @Composable () -> Unit
+): Bitmap? {
+    val rootView =
+        (context as? ComponentActivity)?.window?.decorView?.findViewById<View>(android.R.id.content)
     rootView?.let { view ->
-        val bitmap=createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bitmap)
         view.draw(canvas)
 
@@ -402,62 +517,6 @@ suspend fun Context.cameraProvider(): ProcessCameraProvider = suspendCoroutine {
     listenableFuture.addListener({
         continuation.resume(listenableFuture.get())
     }, ContextCompat.getMainExecutor(this))
-}
-
-fun saveImageLocally(context: Context, image: ImageBitmap): Uri {
-    val imagesDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
-    val file = File(imagesDir, "temp_image.png")
-
-    try {
-        val stream = FileOutputStream(file)
-        image.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, stream)
-        stream.flush()
-        stream.close()
-    } catch (e: IOException) {
-        e.printStackTrace()
-    }
-
-    return FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-}
-
-fun shareImage(context: Context, imageBitmap: ImageBitmap) {
-    val cachePath = File.createTempFile("temp_image", null)
-    try {
-        val stream = FileOutputStream(cachePath)
-        imageBitmap.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, stream)
-        stream.close()
-    } catch (e: IOException) {
-        e.printStackTrace()
-    }
-
-    val imageUri = FileProvider.getUriForFile(
-        context,
-        context.applicationContext.packageName + ".provider",
-        cachePath
-    )
-
-    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/*"
-        putExtra(Intent.EXTRA_STREAM, imageUri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    context.startActivity(Intent.createChooser(shareIntent, "Share Image"))
-}
-
-@Composable
-fun Share(bitmap: Bitmap, context: Context) {
-    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-        putExtra(Intent.EXTRA_TEXT, bitmap)
-    }
-    val shareIntent = Intent.createChooser(sendIntent, null)
-
-
-    Button(onClick = {
-        startActivity(context, shareIntent, null)
-    }) {
-        Icon(imageVector = Icons.Default.Share, contentDescription = null)
-        Text("Share", modifier = Modifier.padding(start = 8.dp))
-    }
 }
 
 @Preview(showBackground = true)
