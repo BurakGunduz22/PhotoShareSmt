@@ -69,7 +69,6 @@ fun LocationScreen(hasRequiredPermissions: Boolean) :String{
             location = "Permission Denied"
         }
     }
-    Text(text = "$hasRequiredPermissions")
     DraggableCard(location)
 
     DisposableEffect(key1 = locationPermissionState) {
