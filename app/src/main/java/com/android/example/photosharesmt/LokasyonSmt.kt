@@ -58,7 +58,7 @@ fun LocationScreen(hasRequiredPermissions: Boolean) :String{
     val locationPermissionState by remember {
         mutableStateOf(hasRequiredPermissions)
     }
-
+    
     var location by remember { mutableStateOf("Location: Unknown") }
 
     LaunchedEffect(locationPermissionState) {
@@ -69,7 +69,7 @@ fun LocationScreen(hasRequiredPermissions: Boolean) :String{
             location = "Permission Denied"
         }
     }
-
+    Text(text = "$hasRequiredPermissions")
     DraggableCard(location)
 
     DisposableEffect(key1 = locationPermissionState) {

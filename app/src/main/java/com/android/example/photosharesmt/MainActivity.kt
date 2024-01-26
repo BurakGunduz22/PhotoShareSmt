@@ -372,8 +372,10 @@ fun KameraApp(
                                 textFieldValue = "" // Clear text field after submission
                             }
                         ),
+                        label = {Text(text = "Eklemek İstediğiniz Metni Girin")},
                         modifier = Modifier
-                            .fillMaxWidth()
+                            .padding(16.dp)
+                            .align(Alignment.Center)
                             .focusRequester(focusRequester),
                         colors = TextFieldDefaults.colors(
                             unfocusedContainerColor = Color.Transparent,
