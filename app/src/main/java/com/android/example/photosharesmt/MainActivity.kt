@@ -37,10 +37,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Cameraswitch
@@ -56,6 +59,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,11 +67,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -97,17 +103,20 @@ import kotlin.coroutines.suspendCoroutine
 import kotlin.math.log
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.FileOutputStream
 import java.io.IOException
-
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private lateinit var cameraExecutor: Executor
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (!hasRequiredPermissions()) {
-            ActivityCompat.requestPermissions(this, CAMERAX_PERMISSIONS, 0)
+            ActivityCompat.requestPermissions(this, CAMERAX_PERMISSIONS,0)
         }
         cameraExecutor = Executors.newSingleThreadExecutor()
         setContent {
@@ -122,13 +131,13 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    KameraApp(controller, cameraExecutor, context)
+                    KameraApp(controller, cameraExecutor, context, hasRequiredPermissions())
                 }
             }
         }
     }
 
-    private fun hasRequiredPermissions(): Boolean {
+    fun hasRequiredPermissions(): Boolean {
         return CAMERAX_PERMISSIONS.all {
             ContextCompat.checkSelfPermission(
                 applicationContext,
@@ -140,6 +149,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         private val CAMERAX_PERMISSIONS = arrayOf(
             Manifest.permission.CAMERA
+            ,Manifest.permission.ACCESS_COARSE_LOCATION
+            ,Manifest.permission.ACCESS_FINE_LOCATION
         )
     }
 }
@@ -223,7 +234,8 @@ fun captureImage(
 fun KameraApp(
     cameraController: LifecycleCameraController,
     cameraExecutor: Executor,
-    context: Context
+    context: Context,
+    hasRequiredPermission: Boolean
 ) {
     Surface(modifier = Modifier.fillMaxSize()) {
         var imageUri by remember { mutableStateOf<Bitmap?>(null) }
@@ -232,24 +244,31 @@ fun KameraApp(
         if (imageUri != null) {
             bitmapShare = imageUri!!
             imageBitmap = imageUri!!.asImageBitmap()
-            val newBit=CaptureComponentAsBitmap {
-                Box() {
-                    Image(
-                        bitmap = imageBitmap,
-                        contentDescription = "",
-                    )
-                    LocationScreen()
-                }
+            var width by remember { mutableStateOf(0) }
+            var height by remember { mutableStateOf(0) }
+            val density = LocalDensity.current
+            var buttonEnabled by remember { mutableStateOf(true) }
+            var timerRunning by remember { mutableStateOf(false) }
+            var elapsedTime by remember { mutableStateOf(0) }
+            fun Int.toDp(): Dp {
+                return this.dp
             }
-
-            val newImageSize=newBit!!.asImageBitmap()
-            Image(bitmap = newImageSize, contentDescription = "AA")
+            Box(modifier = Modifier.fillMaxWidth().fillMaxHeight().onGloballyPositioned { coordinates ->
+                width = with(density) { coordinates.size.width.toDp().value.toInt() }
+                height = with(density) { coordinates.size.height.toDp().value.toInt() }
+            }) {
+                Image(
+                    bitmap = imageBitmap,
+                    contentDescription = "",
+                )
+                LocationScreen(hasRequiredPermission)
+            }
             Column(verticalArrangement = Arrangement.Bottom) {
                 Row(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    FloatingActionButton(
+                    if(buttonEnabled){FloatingActionButton(
                         onClick = {
                             imageUri = null
                         }
@@ -258,12 +277,26 @@ fun KameraApp(
                     }
                     FloatingActionButton(
                         onClick = {
-
+                            buttonEnabled=false
+                            if (!timerRunning) {
+                                timerRunning = true
+                                CoroutineScope(Dispatchers.Default).launch {
+                                    for (i in 1..10) { // change 10 to desired duration
+                                        delay(1000)
+                                        elapsedTime = i
+                                    }
+                                    // Do something else after timer completes
+                                    timerRunning = false
+                                }
+                            }
+                            val newBit=CaptureComponentAsBitmap(width,height,context) {
+                            }
+                            val newImageSize=newBit!!.asImageBitmap()
                             ShareUtils.shareImageToOthers(context, "Test", newBit)
                         }
                     ) {
                         Icon(Icons.Filled.Share, "ShareButton")
-                    }
+                    }}
                 }
             }
 
@@ -310,18 +343,20 @@ fun KameraApp(
         }
     }
 }
-@Composable
-fun CaptureComponentAsBitmap(component: @Composable () -> Unit): Bitmap? {
-    val context = LocalContext.current
+fun startTimer(initialTime: Int, onTick: (Int) -> Unit) {
+    GlobalScope.launch {
+        var elapsedTime = initialTime
+        while (true) {
+            delay(100) // Wait for 1 second
+            elapsedTime++
+            onTick(elapsedTime)
+        }
+    }
+}
+fun CaptureComponentAsBitmap(width:Int,height:Int,context:Context,component: @Composable () -> Unit): Bitmap? {
     val rootView = (context as? ComponentActivity)?.window?.decorView?.findViewById<View>(android.R.id.content)
     rootView?.let { view ->
-        val width = view.width
-        val height = view.height
-
-        val bitmap = remember {
-            createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        }
-
+        val bitmap=createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bitmap)
         view.draw(canvas)
 

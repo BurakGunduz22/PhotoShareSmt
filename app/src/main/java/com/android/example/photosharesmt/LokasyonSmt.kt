@@ -53,14 +53,14 @@ import androidx.compose.ui.unit.toOffset
 
 @SuppressLint("MissingPermission")
 @Composable
-fun LocationScreen() {
+fun LocationScreen(hasRequiredPermissions:Boolean) {
     val activity = LocalContext.current as ComponentActivity
-    val locationPermissionState = rememberPermissionState(permission = Manifest.permission.ACCESS_FINE_LOCATION)
+    val locationPermissionState = hasRequiredPermissions
 
     var location by remember { mutableStateOf("Location: Unknown") }
 
     LaunchedEffect(locationPermissionState) {
-        if (locationPermissionState.status.isGranted) {
+        if (locationPermissionState) {
             // Permission granted, fetch location
             location = fetchLocation(activity)
         } else {
@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            LocationScreen()
+
         }
 
         // Request location permission
